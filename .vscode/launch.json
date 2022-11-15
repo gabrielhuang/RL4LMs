@@ -1,0 +1,40 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "GPT2 PPO Generate Dates",
+            "type": "python",
+            "request": "launch",
+            "program": "scripts/training/train_text_generation.py",
+            "args":["--config_path", "/mnt/home/code/RL4LMs/scripts/training/task_configs/synthetic_generate_dates/gpt2_ppo.yml",
+                //"--log_to_wandb",
+                "--experiment_name", "generate_dates_debug",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "GPT2-haiku Update",
+            "type": "python",
+            "request": "launch",
+            "program": "scripts/training/train_text_generation.py",
+            "args":["--config_path", "/mnt/home/code/RL4LMs/scripts/training/task_configs/haiku/haiku_enforce_meter.yml",
+                //"--log_to_wandb",
+                "--experiment_name", "haiku_enforce_meter",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
