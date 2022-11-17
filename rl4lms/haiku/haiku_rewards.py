@@ -1,6 +1,6 @@
 
 from .count_syllables import count_syllables_in_haiku
-from rl4lms.envs.text_generation.registry import RewardFunctionRegistry, MetricRegistry
+from rl4lms.envs.text_generation.registry import RewardFunctionRegistry, MetricRegistry, DataPoolRegistry
 from rl4lms.envs.text_generation.observation import Observation
 from rl4lms.envs.text_generation.reward import RewardFunction
 from rl4lms.envs.text_generation.metric import BaseMetric
@@ -9,6 +9,9 @@ from transformers import AutoTokenizer, PreTrainedModel
 import torch
 from collections import defaultdict
 import numpy as np
+from rl4lms.data_pools.text_generation_pool import Sample, TextGenPool
+import json
+import random
 
 def compute_meter_score(sample, max_violations=4., parseable=0.2, min_for_correct_lines=0.2, return_explanation=False):
     score = 0.
@@ -17,19 +20,20 @@ def compute_meter_score(sample, max_violations=4., parseable=0.2, min_for_correc
     info['violations_1'] = 5
     info['violations_2'] = 5
     info['violations_3'] = 5
-    info['syntax_error'] = True
+    info['syntax_error'] = 1.
+    info['is_three_lines'] = 0.
     explanation = ''  # could also be more detailed
     if '|' in sample:
         explanation = 'triggered phoneme mode'
     elif sample != '<syntax_error>':
-        info['syntax_error'] = False
+        info['syntax_error'] = 0.
         # Is at least parseable
         score += parseable
         syllables = count_syllables_in_haiku(sample, fast=False)
         #print(syllables, sample)
         is_three_lines = len(syllables) == 3
         info['is_three_lines'] = is_three_lines
-        if is_three_lines:
+        if len(syllables) >= 3:  # because the generation does not stop
             # Got three lines
             score += min_for_correct_lines
             info['violations_1'] = min(abs(syllables[0]-5), 5)
@@ -50,38 +54,51 @@ def compute_meter_score(sample, max_violations=4., parseable=0.2, min_for_correc
                 explanation += 'line 2 is shorter than 5,'
             # Total score
             score += (1-min_for_correct_lines-parseable)*(1. - min(1., violations/max_violations))
-            explanation = 'perfect'
         else:
             explanation = 'number of lines is not 3'
     else:
         explanation = 'syntax error'
-        info['syntax_error'] = True
+        info['syntax_error'] = 1.
     info['explanation'] = explanation
     if return_explanation:
-        return score, explanation
+        return score, info
     else:
         return score
 
-def process_output(sample):
+def process_output(sample, conditional):
     # Stop at the first closing parenthesis
-    parts = sample.split(')')
-    if len(parts)>=1:
-        tokens = parts[0].split(' = ')
-        if len(tokens) == 2:
-            return tokens[1]
-    # in any other case return the empty string
+    #parts = sample.split(')')
+    #if len(parts)>=1:
+    sample = sample.strip()
+    if conditional:
+        haikus = sample.strip().split('=')
+        if len(haikus) == 1:
+            return sample
+        elif len(haikus) >= 2:
+            myhaiku = haikus[0]
+            # truncate to last period
+            if '.' in myhaiku:
+                myhaiku = myhaiku[:myhaiku.rfind('.')+1]
+            return myhaiku    
+    else:
+        # This is only for unconditional generaiton
+        tokens = sample.split(' = ')
+        if len(tokens) >= 2:
+            return tokens[1].strip()
+        # in any other case return the empty string
     return '<syntax_error>'
 
-def compute_score(sample):
-    processed = process_output(sample)
+def compute_score(sample, conditional):
+    processed = process_output(sample, conditional)
     score, info = compute_meter_score(processed, return_explanation=True)
     return score, info
 
 
 # Custom reward function
 class HaikuMeterRewardFunction(RewardFunction):
-   def __init__(self, *args) -> None:
+   def __init__(self, conditional: bool) -> None:
        super().__init__()
+       self.conditional = conditional
 
    def __call__(self, prev_observation: Observation,
                 action: int,
@@ -89,7 +106,7 @@ class HaikuMeterRewardFunction(RewardFunction):
                 done: bool,
                 meta_info: Dict[str, Any] = None) -> float:
         if done:
-            reward, info = compute_score(current_observation.context_text)
+            reward, info = compute_score(current_observation.context_text, conditional=self.conditional)
             return reward
         return 0
 
@@ -97,8 +114,9 @@ RewardFunctionRegistry.add('haiku_meter', HaikuMeterRewardFunction)
 
 
 class HaikuMeterMetric(BaseMetric):
-    def __init__(self) -> None:
+    def __init__(self, conditional: bool) -> None:
         super().__init__()
+        self.conditional = conditional
 
     def compute(self,
                 prompt_texts: List[str],
@@ -108,17 +126,43 @@ class HaikuMeterMetric(BaseMetric):
                 model: PreTrainedModel = None,
                 split_name: str = None) -> Dict[str, float]:
 
-        all_rewards = defaultdict()
+        all_rewards = defaultdict(list)
         for gen_text in generated_texts:
             # prompt is <BOS> token (unconditional generation?)
-            reward, info = compute_score(gen_text)
+            reward, info = compute_score(gen_text, conditional=self.conditional)
             for k, v in info.items():
                 if k != 'explanation':
                     all_rewards[k].append(v)
 
         metric_dict = {
-            f"semantic/{k}": (v, np.mean(v)) for k, v in all_rewards
+            f"semantic/{k}": (v, np.mean(v)) for k, v in all_rewards.items()
         }
         return metric_dict
 
 MetricRegistry.add('haiku_meter', HaikuMeterMetric)
+
+
+
+class HaikuByTopicDataPool(TextGenPool):
+
+   @classmethod
+   def prepare(cls, split: str, data_path: str, n_samples: int = None) -> None:
+        with open(data_path, 'r') as f:
+           data = json.load(f)
+        topics = set([next(iter(x)) for x in data['data']])
+        data['data']
+        samples = []
+        for ix, topic_dict in enumerate(data['data']):
+            for topic, references in topic_dict.items():  # there should be only one
+                sample = Sample(id=f"{split}_{ix}",
+                           prompt_or_input_text=f'{topic} =',
+                           references=references
+                           )
+                samples.append(sample)
+        if n_samples is not None:
+            random.shuffle(samples)
+            samples = samples[:min(n_samples, len(samples))]
+        pool_instance = cls(samples)
+        return pool_instance
+
+DataPoolRegistry.add('haiku_by_topic', HaikuByTopicDataPool)
