@@ -5,6 +5,10 @@ import yaml
 import os
 
 
+import rl4lms.haiku.haiku_rewards  # will register appropriate metrics and rewards, used in config file
+
+
+
 def main(config_path: str,
          project_name: str,
          experiment_name: str,
@@ -40,6 +44,7 @@ def main(config_path: str,
                                   train_eval_config=config["train_evaluation"],
                                   tracker=tracker)
     trainer.train_and_eval()
+
 
 
 if __name__ == "__main__":

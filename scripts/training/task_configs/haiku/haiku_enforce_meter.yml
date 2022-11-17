@@ -6,13 +6,18 @@ tokenizer:
 
 reward_fn:
   id: haiku_meter
-  args: {}
+  args:
+    conditional: 1
 
 datapool:
-  id: dummy_pool
+  id: haiku_by_topic
   args:
-    n_samples: 50
-    prompt: '<|endoftext|>'
+    n_samples: 100000
+    data_path: data/reddit_dataset.json
+  #id: dummy_pool
+  #args:
+  #  n_samples: 50
+  #  prompt: '<|endoftext|>'
 
 env:
   #n_envs: 10
@@ -41,7 +46,7 @@ alg:
       model_name: gpt2_haiku_finetuned
       apply_model_parallel: True
       generation_kwargs:
-        do_sample: Truem
+        do_sample: True
         top_k: 0
         max_new_tokens: 30 # this must align with env's max steps
   
@@ -51,4 +56,5 @@ train_evaluation:
   eval_every: 5
   metrics:
     - id: haiku_meter
-      args: {}
+      args:
+        conditional: 1
